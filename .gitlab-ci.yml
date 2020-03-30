@@ -1,0 +1,167 @@
+####################
+#      NOTES       #
+####################
+#
+# We build ROS1 and ROS2 workspaces in separate jobs, and then use gitlab's artifacts feature
+# to pass the artifacts produced by those builds to downstream jobs. We also use the 'dependencies'
+# and 'needs' features to specifiy which jobs depend on which other jobs, to enhance parallelization
+# More info: https://docs.gitlab.com/ee/ci/yaml/#dependencies
+
+stages:
+  - build_bazel
+  - build_base_and_analyze
+  - deploy # We do deploy ahead of test to make images available for vehicle testing even if unit tests fail
+  - test
+
+variables:
+  # skip downloading LFS in the clone step so that we may do it manually with the supplied credentials
+  # in the before_script
+  GIT_LFS_SKIP_SMUDGE: "1"
+
+before_script:
+  - git config lfs.url https://admin:${JFROG_ADMIN_API_KEY}@voyage.jfrog.io/voyage/api/lfs/commander-lfs
+  - git lfs pull
+
+build_bazel:
+  stage: build_bazel
+  interruptible: true
+  tags:
+    - commander
+  script:
+    - docker run --rm --volume $(pwd):/home/user/commander --workdir /home/user/commander voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) bash -c './build_bazel.sh -t'
+  artifacts:
+    when: always
+    paths:
+      - install
+      - bazel_build_tracing.json.gz
+      - bazel_mem_tracing.txt
+
+
+build_ros1:
+  stage: build_base_and_analyze
+  interruptible: true
+  tags:
+    - commander
+  script:
+    - docker run --rm --volume $(pwd):/home/user/commander --workdir /home/user/commander voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) bash -c './prebuild/prebuild.sh && ./ros1_ws/build.sh'
+  artifacts:
+    paths:
+      - ros1_ws/build
+      - ros1_ws/devel
+      - ros1_ws/src/external/frustumnet/python/frustumnet/tensorrt/custom_layers
+      - ros1_ws/src/external/yolov3_tensorrt/python/yolov3_tensorrt/tensorrt/custom_layers
+      - ros1_ws/src/external/pixor/src/pixor/custom_layers
+  needs: ["build_bazel"]
+
+build_ros2:
+  stage: build_base_and_analyze
+  interruptible: true
+  tags:
+    - commander
+  script:
+    - docker run --env BUILD_ALL_COMMANDER_MSGS=true --env BUILD_ALL_VEHICLE_MSGS=true --rm --volume $(pwd):/home/user/commander --workdir /home/user/commander voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) bash -c './ros2_ws/build.sh'
+  artifacts:
+    paths:
+      - ros2_ws/build
+      - ros2_ws/install
+  needs: ["build_bazel"]
+
+deploy_image:
+  stage: deploy
+  interruptible: true
+  tags:
+    - commander
+  script:
+    - docker/release.sh
+    # POST a placeholder status for the simian build so that we can't merge until applied overwrites this status
+    # POST it only after a successful image build, so that we don't POST if the image build fails
+    # The whole line is in quotes because it contains a colon https://stackoverflow.com/q/54865364/2544357
+    - "curl --request POST --header \"PRIVATE-TOKEN: ${GITLAB_API_TOKEN}\" \"https://gitlab.com/api/v4/projects/voyage-auto%2Fautonomy%2Fcommander/statuses/${CI_COMMIT_SHA}?name=applied/mobius&state=pending&description=placeholder%20for%20applied%20to%20overwrite\""
+  needs: ["build_bazel", "build_ros1", "build_ros2"]
+
+build_ros2_coverage:
+  stage: build_base_and_analyze
+  interruptible: true
+  tags:
+    - commander
+  script:
+    - docker run --rm --volume $(pwd):/home/user/commander --workdir /home/user/commander voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) bash -c './ros2_ws/build.sh -c'
+  artifacts:
+    paths:
+      - ros2_ws/build
+      - ros2_ws/install
+  needs: ["build_bazel"]
+
+test_ros1:
+  stage: test
+  interruptible: true
+  tags:
+    - commander
+  needs: ["build_bazel", "build_ros1"]
+  script:
+    - docker run --rm --volume $(pwd):/home/user/commander --workdir /home/user/commander voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) bash -c './prebuild/prebuild.sh && ./ros1_ws/test.sh'
+
+test_ros2:
+  stage: test
+  interruptible: true
+  tags:
+    - commander
+  needs: ["build_bazel", "build_ros2_coverage"]
+  script:
+    - ci_env=`bash <(curl -s https://codecov.io/env)` # arguments for docker for codecov to be able to detect CI env (https://docs.codecov.io/docs/testing-with-docker)
+    # network=host is necessary in order to get access to the vcan interface
+    - CONTAINER_ID=$(docker run --network=host $ci_env --volume $(pwd):/home/user/commander --rm --detach voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) sleep 3600)
+    - docker exec --workdir=/home/user/commander ${CONTAINER_ID} bash -c './ros2_ws/test.sh'
+    # Run gcovr to provide coverage info to gitlab CI
+    - docker exec --tty --workdir=/home/user/commander/ros2_ws ${CONTAINER_ID} bash -c 'gcovr --root .'
+    # Upload the coverage details to codecov (https://docs.codecov.io/v4.3.0/docs/about-the-codecov-bash-uploader)
+    - docker exec --tty --workdir=/home/user/commander ${CONTAINER_ID} bash -c 'bash <(curl -s https://codecov.io/bash) -t ac5577dd-373a-478f-a3e2-785a58c85a80'
+    - docker stop ${CONTAINER_ID}
+
+cppcheck_basic:
+  stage: build_base_and_analyze
+  interruptible: true
+  tags:
+    - commander
+  script:
+    - docker run --rm --tty --volume $(pwd):/home/user/commander --workdir=/home/user/commander voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) ./cppcheck.sh
+
+cppcheck_detailed:
+  stage: build_base_and_analyze
+  interruptible: true
+  tags:
+    - commander
+  script:
+    - docker run --rm --tty --volume $(pwd):/home/user/commander --workdir=/home/user/commander voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) ./ros2_ws/cppcheck_detailed.sh
+
+clang_static_analysis:
+  stage: build_base_and_analyze
+  interruptible: true
+  tags:
+    - commander
+  script:
+    # Run the command with bash -i so that ~/.bashrc will be sourced and with -c to specify a command instead of a shell
+    - docker run --rm --tty --volume $(pwd):/home/user/commander --workdir=/home/user/commander voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) bash -ic './ros2_ws/build.sh -s scans'
+  artifacts:
+    paths:
+      - scans/*/*
+    expire_in: 2 weeks
+    when: on_failure
+
+autonomy_regression_tests:
+  stage: test
+  interruptible: true
+  tags:
+    - commander
+  needs: ["build_bazel", "build_ros1", "build_ros2"]
+  script:
+    - docker run --rm --tty --volume $(pwd):/home/user/commander --workdir=/home/user/commander --env CI=true --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) bash -ic './run_regression_tests.sh'
+
+autonomy_regression_tests_v2:
+  stage: test
+  interruptible: true
+  tags:
+    - commander
+  needs: ["build_bazel", "build_ros1", "build_ros2"]
+  script:
+    - docker run --rm --tty --volume $(pwd):/home/user/commander --workdir=/home/user/commander --env CI=true --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY voyage/ros:$(cat docker/VOYAGE_ROS_VERSION) bash -ic './run_ci_tests_v2.sh'

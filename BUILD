@@ -1,0 +1,44 @@
+cc_library(
+    name = 'vmath',
+    hdrs = [
+            'include/vmath_types.h',
+            'include/vmath_types_impl.h',
+            'include/vmath.h',
+            'include/vmath_impl.h',
+           ],
+    strip_include_prefix = 'include',
+    linkstatic = True,
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = 'vmath_compiled_lib',
+    hdrs = [
+            'include/vmath_types.h',
+            'include/vmath_types_impl.h',
+            'include/vmath.h',
+            'include/vmath_impl.h',
+           ],
+    srcs = [
+            'src/vmath_compiled_lib.cpp',
+           ],
+    defines = ['VMATH_COMPILED_LIB'],
+    strip_include_prefix = 'include',
+    linkstatic = True,
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = 'terminal',
+    hdrs = ['include/terminal.h'],
+    strip_include_prefix = 'include',
+    linkstatic = True,
+    visibility = ['//visibility:public'],
+)
+
+cc_binary(
+    name = 'sample_terminal',
+    srcs = ['src/sample_terminal_main.cpp'],
+    deps = [':terminal'],
+    visibility = ['//visibility:public'],
+)

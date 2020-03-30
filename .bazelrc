@@ -1,0 +1,15 @@
+build --copt=-Wall
+build --copt=-Werror
+build --copt=-Wno-ignored-attributes  # because of Eigen
+build --copt=-Wno-maybe-uninitialized # because of Eigen
+build --copt=-fpic  # because the stack is loaded as a shared library by Simian
+# Use color diagnostics
+build --copt=-fdiagnostics-color
+# Always assert
+build --copt=-UNDEBUG
+# Add C++14 compiler flags.
+build --cxxopt=-std=c++14
+build --host_cxxopt=-std=c++14
+
+# use a custom output base folder (for persistent cache)
+# build --output_base=/home/user/commander/.bazel-cache
