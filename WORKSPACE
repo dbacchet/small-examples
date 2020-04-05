@@ -1,6 +1,7 @@
 workspace(name = "vmath_examples")
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
 
 http_archive(
@@ -10,4 +11,9 @@ http_archive(
     strip_prefix = "googletest-release-1.10.0",
 )
 
-
+git_repository(
+    name = "vmath",
+    remote = "https://github.com/dbacchet/vmath.git",
+    commit = "d47ecd3febbea1f81ae00c39aff0915883dd2080",
+    shallow_since = "1586049986 -0700"
+)
