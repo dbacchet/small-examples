@@ -39,9 +39,14 @@ void terminal_update(canvas_handler_t c);
 // that has the following format: "ESC[ 38;2;⟨r⟩;⟨g⟩;⟨b⟩;48;2;⟨r⟩;⟨g⟩;⟨b⟩m▀"
 //                                      |______________| |______________| ^_____________
 //                                       foreground clr   background clr   top half char
-#define TERMINAL_TEMPLATE_STR "\033[38;2;rrr;ggg;bbb;48;2;rrr;ggg;bbbm▀"
-#define TERMINAL_TEMPLATE_STR_SPRINTF "\033[38;2;%03u;%03u;%03u;48;2;%03u;%03u;%03um▀"
+#define TERMINAL_TEMPLATE_STR         "\033[38;2;rrr;ggg;bbb;48;2;rrr;ggg;bbbm▀\033[0m"
+#define TERMINAL_TEMPLATE_STR_SPRINTF "\033[38;2;%03u;%03u;%03u;48;2;%03u;%03u;%03um▀\033[0m"
 #define PIXEL_CHAR "▀"
+#define TERMINAL_CLEAR    "\033c"
+#define TERMINAL_RESET  "\033[0m"           // reset terminal settings
+#define TERMINAL_CURSOR_UP_FORMAT "\033[%dA"  // Move cursor up given lines.
+#define TERMINAL_CURSOR_POS_FORMAT "\033[%d;%dH"  // Move cursor up given lines.
+
 
 typedef struct {
     uint16_t width;
@@ -51,7 +56,7 @@ typedef struct {
 } canvas_t;
 
 void terminal_clear() {
-    
+    write(STDOUT_FILENO, TERMINAL_CLEAR, strlen(TERMINAL_CLEAR));
 }
 
 
@@ -66,7 +71,20 @@ canvas_handler_t terminal_create_canvas(uint16_t width, uint16_t height) {
     memset(c->pixels, 0, width*height_padded*sizeof(terminal_color_t));
     // allocate space for the string
     const uint16_t tmpl_len = strlen(TERMINAL_TEMPLATE_STR);
-    c->term_string = (char*)malloc(width*height_padded/2*tmpl_len*sizeof(char)+1);
+    c->term_string = (char*)malloc(width*height_padded/2*tmpl_len*sizeof(char) + height_padded/2 + 1);
+    char *pos = c->term_string;
+    for (int j=0; j<height_padded/2; j++) {
+        // printf("%ld\n", pos-c->term_string);
+        for (int i=0; i<width; i++) {
+            sprintf(pos, TERMINAL_TEMPLATE_STR_SPRINTF, 0, 0, 0, 0, 0, 0);
+            pos+=tmpl_len;
+        }
+        // printf(" %ld\n", pos-c->term_string);
+        sprintf(pos, "%c", '\n');
+        ++pos;
+        // printf("  %ld\n", pos-c->term_string);
+    }
+    *pos = 0;
     // printf("%d %d %d\n", tmpl_len, (int)strlen(TERMINAL_TEMPLATE_STR), (int)strlen(PIXEL_CHAR));
     return (canvas_handler_t)c;
 }
@@ -93,27 +111,41 @@ void terminal_update(canvas_handler_t c_) {
     //     }
     //     printf("\n");
     // }
+    char tmp[128];
     for (int k=0; k<c->width*c->height/2; k++) {
         uint16_t i = k%c->width;
-        uint16_t j1 = 2*(k/c->width);
+        uint16_t j1 = 2*(k/(c->width));
         uint16_t j2 = j1+1;
-        char *pos = c->term_string + k*tmpl_len;
+        // char *pos = c->term_string + k*tmpl_len;
+        char *pos = c->term_string + j1/2*(c->width*tmpl_len+1) + i*tmpl_len;
         terminal_color_t c1 = c->pixels[j1*c->width+i];
         terminal_color_t c2 = c->pixels[j2*c->width+i];
-        sprintf(pos, TERMINAL_TEMPLATE_STR_SPRINTF, c1.r, c1.g, c1.b, c2.r, c2.g, c2.b);
-        // memcpy(pos+36, PIXEL_CHAR, strlen(PIXEL_CHAR));
+        sprintf(tmp, TERMINAL_TEMPLATE_STR_SPRINTF, c1.r, c1.g, c1.b, c2.r, c2.g, c2.b); // optimization: instead of the entire string we could overwrite only the numbers
+        memcpy(pos, tmp, strlen(tmp));
     }
+    // move the cursor to a fixed pos
+    // sprintf(tmp, TERMINAL_CURSOR_UP_FORMAT, c->height/2);
+    sprintf(tmp, TERMINAL_CURSOR_POS_FORMAT, 0,0);
+    write(STDOUT_FILENO, tmp, strlen(tmp));
     // c->term_string[c->width*c->height/2*tmpl_len] = 0;
     // for (int i=0; i<40; i++) {
     //     printf("%d: %d\n", i, c->term_string[i]);
     // }
     // printf("%d %d\n",(int)strlen(c->term_string), c->width*c->height/2*tmpl_len);
-    // write(STDOUT_FILENO, c->term_string, c->width*c->height/2*tmpl_len);
+    // int len = strlen(c->term_string);
+    // for (int i=0; i<len; i++) {
+    //     // printf("%d: %d %c\n", i, c->term_string[i], c->term_string[i]);
+    //     if (c->term_string[i]==27) {
+    //         // printf("change");
+    //         c->term_string[i]='/';
+    //     }
+    // }
+    write(STDOUT_FILENO, c->term_string, strlen(c->term_string));//c->width*c->height/2*tmpl_len);
     printf("\n");
-    for (int i=0; i<c->height/2; i++) {
-        write(STDOUT_FILENO, c->term_string + i*c->width*tmpl_len, c->width*tmpl_len);
-        printf("\n");
-    }
+    // for (int i=0; i<c->height/2; i++) {
+    //     write(STDOUT_FILENO, c->term_string + i*c->width*tmpl_len, c->width*tmpl_len);
+    //     printf("\n");
+    // }
     // printf("%s\n",c->term_string);
 }
 #endif
