@@ -1,0 +1,14 @@
+build --copt=-Wall
+build --copt=-Werror
+build --copt=-fpic  # make sure we generate PIC
+
+# Use color diagnostics
+build --copt=-fdiagnostics-color
+
+# Always assert
+build --copt=-UNDEBUG
+
+# Add C++14 compiler flags.
+build --cxxopt=-std=c++17
+build --host_cxxopt=-std=c++17
+
