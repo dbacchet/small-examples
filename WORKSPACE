@@ -14,8 +14,8 @@ http_archive(
 git_repository(
     name = "vmath",
     remote = "https://github.com/dbacchet/vmath.git",
-    commit = "d47ecd3febbea1f81ae00c39aff0915883dd2080",
-    shallow_since = "1586049986 -0700"
+    commit = "ac4c326af0cf9c211d3feb92b99f909473eedcc8",
+    shallow_since = "1586239353 -0700"
 )
 
 http_archive(
